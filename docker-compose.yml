@@ -1,0 +1,153 @@
+# Vault AI - Docker Compose Configuration
+# 
+# Supports both local PostgreSQL and Supabase database.
+# Storage is always local filesystem.
+#
+# Usage:
+#   With local DB:  docker-compose --profile local-db up -d
+#   With Supabase:  docker-compose up -d (set DATABASE_URL in .env)
+
+version: "3.8"
+
+services:
+  # FastAPI Application
+  api:
+    build: .
+    container_name: vault-ai-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Database - Use Supabase URLs from .env or fall back to local
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/vault_ai}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgresql://postgres:postgres@db:5432/vault_ai}
+      
+      # Supabase (optional)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+      
+      # Redis
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      
+      # Google Gemini AI
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      
+      # Rate Limiting
+      - LLM_REQUESTS_PER_MINUTE=${LLM_REQUESTS_PER_MINUTE:-10}
+      
+      # Local Storage
+      - STORAGE_PATH=/app/storage/documents
+      
+      # App settings
+      - DEBUG=${DEBUG:-true}
+      - ENABLE_PGVECTOR=${ENABLE_PGVECTOR:-true}
+      - RESET_DB_ON_STARTUP=${RESET_DB_ON_STARTUP:-false}
+    volumes:
+      - document_storage:/app/storage/documents
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/v1/health/live')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Celery Worker
+  worker:
+    build: .
+    container_name: vault-ai-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/vault_ai}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgresql://postgres:postgres@db:5432/vault_ai}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_REQUESTS_PER_MINUTE=${LLM_REQUESTS_PER_MINUTE:-10}
+      - STORAGE_PATH=/app/storage/documents
+      - ENABLE_PGVECTOR=${ENABLE_PGVECTOR:-true}
+    volumes:
+      - document_storage:/app/storage/documents
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Celery Beat (Scheduler) - Optional
+  beat:
+    build: .
+    container_name: vault-ai-beat
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    profiles:
+      - full
+
+  # Flower (Celery Monitoring) - Optional
+  flower:
+    build: .
+    container_name: vault-ai-flower
+    command: celery -A app.workers.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - redis
+      - worker
+    restart: unless-stopped
+    profiles:
+      - full
+
+  # PostgreSQL Database (Local - use profile to enable)
+  db:
+    image: postgres:15-alpine
+    container_name: vault-ai-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=vault_ai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles:
+      - local-db
+
+  # Redis (Required for task queue)
+  redis:
+    image: redis:7-alpine
+    container_name: vault-ai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  document_storage:
+
+networks:
+  default:
+    name: vault-ai-network

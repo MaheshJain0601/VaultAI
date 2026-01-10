@@ -1,0 +1,291 @@
+LOAD BALANCING STRATEGIES IN DISTRIBUTED SYSTEMS
+================================================
+
+Table of Contents
+-----------------
+1. Introduction to Load Balancing
+2. Types of Load Balancers
+3. Load Balancing Algorithms
+4. Health Checks and Failover
+5. Implementation Considerations
+6. Cloud-Native Load Balancing
+
+
+1. INTRODUCTION TO LOAD BALANCING
+---------------------------------
+
+Load balancing is the process of distributing network traffic across multiple 
+servers to ensure no single server bears too much demand. This improves:
+
+* Availability: If one server fails, others continue serving requests
+* Reliability: Distributed workload reduces risk of overload
+* Performance: Requests are served faster with optimal resource utilization
+* Scalability: Easy to add/remove servers based on demand
+
+Basic Architecture:
+
+    Clients
+       |
+       v
+  [Load Balancer]
+       |
+  +----+----+
+  |    |    |
+  v    v    v
+ S1   S2   S3  (Backend Servers)
+
+
+2. TYPES OF LOAD BALANCERS
+--------------------------
+
+2.1 Hardware Load Balancers
+---------------------------
+- Dedicated physical appliances
+- High performance but expensive
+- Examples: F5 BIG-IP, Citrix ADC
+- Best for: Enterprise data centers with high traffic
+
+2.2 Software Load Balancers
+---------------------------
+- Run on commodity hardware or VMs
+- More flexible and cost-effective
+- Examples: HAProxy, NGINX, Envoy
+- Best for: Cloud environments, microservices
+
+2.3 DNS Load Balancing
+----------------------
+- Distributes traffic at DNS resolution level
+- Simple but limited control
+- Examples: Route 53, Cloudflare DNS
+- Best for: Geographic distribution, basic failover
+
+2.4 Layer 4 (Transport Layer) Load Balancing
+--------------------------------------------
+- Operates at TCP/UDP level
+- Faster, doesn't inspect packet contents
+- Decision based on: IP address, port number
+- Best for: High-throughput, low-latency requirements
+
+2.5 Layer 7 (Application Layer) Load Balancing
+----------------------------------------------
+- Operates at HTTP/HTTPS level
+- Can inspect headers, cookies, content
+- Decision based on: URL, headers, content type
+- Best for: Complex routing, SSL termination
+
+
+3. LOAD BALANCING ALGORITHMS
+----------------------------
+
+3.1 Round Robin
+---------------
+Distributes requests sequentially to each server in rotation.
+
+Server 1 -> Server 2 -> Server 3 -> Server 1 -> ...
+
+Pros: Simple, equal distribution
+Cons: Doesn't consider server capacity or current load
+Use case: Homogeneous server environments
+
+
+3.2 Weighted Round Robin
+------------------------
+Assigns weights to servers based on capacity.
+
+Server 1 (weight=3) -> Server 2 (weight=2) -> Server 3 (weight=1)
+Distribution: S1, S1, S1, S2, S2, S3, S1, S1, S1, ...
+
+Pros: Accounts for different server capacities
+Cons: Static weights don't adapt to real-time conditions
+Use case: Mixed hardware environments
+
+
+3.3 Least Connections
+---------------------
+Routes to server with fewest active connections.
+
+Current connections: S1(5), S2(3), S3(8)
+Next request -> S2
+
+Pros: Better for varying request durations
+Cons: Doesn't consider connection processing time
+Use case: Long-lived connections (WebSockets, databases)
+
+
+3.4 Weighted Least Connections
+------------------------------
+Combines connection count with server capacity weights.
+
+Score = Active Connections / Weight
+Route to server with lowest score
+
+Pros: Best of both worlds
+Cons: More complex to configure
+Use case: Production environments with mixed servers
+
+
+3.5 IP Hash
+-----------
+Routes based on hash of client IP address.
+
+hash(client_ip) % number_of_servers = target_server
+
+Pros: Session persistence without cookies
+Cons: Uneven distribution if IP ranges cluster
+Use case: Applications requiring session affinity
+
+
+3.6 Least Response Time
+-----------------------
+Routes to server with fastest response time and fewest connections.
+
+Metrics: (Active Connections, Avg Response Time)
+S1(5, 20ms), S2(3, 50ms), S3(8, 10ms)
+Decision considers both factors
+
+Pros: Optimal user experience
+Cons: Requires continuous monitoring
+Use case: Latency-sensitive applications
+
+
+3.7 Random
+----------
+Randomly selects a server for each request.
+
+Pros: Simple, no state to maintain
+Cons: Potentially uneven distribution
+Use case: Testing, simple deployments
+
+
+4. HEALTH CHECKS AND FAILOVER
+-----------------------------
+
+4.1 Active Health Checks
+------------------------
+Load balancer actively probes servers:
+
+- HTTP GET to /health endpoint
+- TCP connection test
+- Custom script execution
+- Frequency: Every 5-30 seconds typically
+
+Configuration example (NGINX):
+    upstream backend {
+        server 192.168.1.1:8080;
+        server 192.168.1.2:8080;
+        health_check interval=10s fails=3 passes=2;
+    }
+
+4.2 Passive Health Checks
+-------------------------
+Monitor actual traffic responses:
+
+- Track error rates per server
+- Monitor response times
+- Mark unhealthy after threshold exceeded
+
+4.3 Failover Strategies
+-----------------------
+When a server is marked unhealthy:
+
+1. Immediate removal from rotation
+2. Traffic redistributed to healthy servers
+3. Background recovery checks
+4. Gradual reintroduction when healthy
+
+Failover timeline:
+    [Failure Detected] -> [Server Removed] -> [Traffic Redistributed]
+                              |
+                         [Recovery Checks]
+                              |
+                    [Gradual Reintroduction]
+
+
+5. IMPLEMENTATION CONSIDERATIONS
+--------------------------------
+
+5.1 Session Persistence (Sticky Sessions)
+-----------------------------------------
+Ensures user requests go to same server:
+
+Methods:
+- Cookie-based: Insert server ID in cookie
+- IP-based: Hash client IP
+- Application-based: Shared session store (Redis)
+
+Trade-offs:
+- Simpler application logic
+- Can cause uneven load distribution
+- Complicates failover
+
+
+5.2 SSL/TLS Termination
+-----------------------
+Where to handle encryption:
+
+Option 1: At Load Balancer
+- Pros: Simpler backend, better performance
+- Cons: Unencrypted internal traffic
+
+Option 2: End-to-End (Pass-through)
+- Pros: Full encryption
+- Cons: Higher backend CPU usage
+
+Option 3: Re-encryption
+- Pros: Security + visibility
+- Cons: Most complex setup
+
+
+5.3 Connection Draining
+-----------------------
+Graceful server removal:
+
+1. Stop sending new connections to server
+2. Allow existing connections to complete
+3. Wait for timeout or all connections closed
+4. Remove server from pool
+
+Prevents: Dropped connections, lost data
+
+
+6. CLOUD-NATIVE LOAD BALANCING
+------------------------------
+
+6.1 AWS Elastic Load Balancing
+------------------------------
+- Application Load Balancer (ALB): Layer 7, HTTP/HTTPS
+- Network Load Balancer (NLB): Layer 4, ultra-low latency
+- Classic Load Balancer: Legacy, both layers
+
+6.2 Google Cloud Load Balancing
+-------------------------------
+- Global HTTP(S) Load Balancer
+- Regional External/Internal Load Balancers
+- SSL Proxy and TCP Proxy
+
+6.3 Kubernetes Load Balancing
+-----------------------------
+- Service types: ClusterIP, NodePort, LoadBalancer
+- Ingress Controllers: NGINX, Traefik, Istio
+- Service Mesh: Envoy-based sidecars
+
+
+SUMMARY
+-------
+Choosing the right load balancing strategy depends on:
+
+1. Traffic patterns (steady vs bursty)
+2. Application type (stateless vs stateful)
+3. Server heterogeneity
+4. Latency requirements
+5. Budget and infrastructure
+
+Start simple (Round Robin) and evolve based on metrics and requirements.
+
+
+Document Information
+--------------------
+Version: 1.0
+Author: System Design Team
+Last Updated: January 2026
+

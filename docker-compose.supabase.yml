@@ -1,0 +1,134 @@
+# Vault AI - Docker Compose for Supabase Database
+# 
+# Use this configuration when connecting to Supabase for database.
+# This excludes the local PostgreSQL service.
+# Storage is always local filesystem.
+#
+# Usage:
+#   docker-compose -f docker-compose.supabase.yml up -d
+#
+# Prerequisites:
+#   1. Create a Supabase project at https://supabase.com
+#   2. Get your connection strings from: Settings > Database > Connection string
+#   3. Update your .env file with the Supabase credentials
+#   4. Update extra_hosts below with your Supabase pooler's IP address:
+#      Run: dig +short A aws-0-YOUR_REGION.pooler.supabase.com
+
+services:
+  # FastAPI Application
+  api:
+    build: .
+    container_name: vault-ai-api
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      # Supabase pooler IPv4 address (fixes Docker IPv6 routing issues on macOS)
+      - "aws-1-ap-northeast-2.pooler.supabase.com:15.164.188.235"
+    environment:
+      # Supabase Database Connection
+      - DATABASE_URL=${DATABASE_URL}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL}
+      
+      # Supabase Client (optional - for additional features)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Google Gemini AI
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      
+      # Rate Limiting
+      - LLM_REQUESTS_PER_MINUTE=${LLM_REQUESTS_PER_MINUTE:-10}
+      
+      # Local Storage
+      - STORAGE_PATH=/app/storage/documents
+      
+      # App settings
+      - DEBUG=${DEBUG:-false}
+      - ENABLE_PGVECTOR=true
+      - RESET_DB_ON_STARTUP=${RESET_DB_ON_STARTUP:-false}
+    volumes:
+      - document_storage:/app/storage/documents
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/v1/health/live')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Celery Worker
+  worker:
+    build: .
+    container_name: vault-ai-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
+    extra_hosts:
+      # Supabase pooler IPv4 address (fixes Docker IPv6 routing issues on macOS)
+      - "aws-1-ap-northeast-2.pooler.supabase.com:15.164.188.235"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+      - REDIS_URL=redis://redis:6379/0
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_REQUESTS_PER_MINUTE=${LLM_REQUESTS_PER_MINUTE:-10}
+      - STORAGE_PATH=/app/storage/documents
+      - ENABLE_PGVECTOR=true
+    volumes:
+      - document_storage:/app/storage/documents
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Redis (Required for task queue)
+  redis:
+    image: redis:7-alpine
+    container_name: vault-ai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Flower (Celery Monitoring) - Optional
+  flower:
+    build: .
+    container_name: vault-ai-flower
+    command: celery -A app.workers.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - worker
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+volumes:
+  redis_data:
+  document_storage:
+
+networks:
+  default:
+    name: vault-ai-network
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
