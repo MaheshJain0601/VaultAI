@@ -439,6 +439,10 @@ vault-ai/
 - [ ] Advanced caching strategies
 - [ ] GraphQL API option
 
+## 🎬 Demo
+
+<video src="https://github.com/MaheshJain0601/VaultAI/raw/main/assets/demo.mp4" controls="controls" style="max-width: 100%;"></video>
+
 ## 📄 License
 
 MIT License - see LICENSE file for details.
