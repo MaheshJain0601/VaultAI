@@ -441,7 +441,7 @@ vault-ai/
 
 ## 🎬 Demo
 
-<video src="https://github.com/MaheshJain0601/VaultAI/raw/main/assets/demo.mp4" controls="controls" style="max-width: 100%;"></video>
+[📥 Download Demo Video](./assets/demo.mp4)
 
 ## 📄 License
 
