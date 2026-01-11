@@ -1,0 +1,212 @@
+Consistent Hashing: A Complete Guide
+
+Introduction to Consistent Hashing
+==================================
+
+Consistent hashing is a distributed hashing technique used in distributed systems to achieve load balancing and minimize data movement when nodes are added or removed from the system. It was first introduced by David Karger et al. in 1997 as a solution for distributed caching.
+
+The Problem with Traditional Hashing
+====================================
+
+In traditional hash-based distribution, we use a simple modulo operation:
+    server = hash(key) % number_of_servers
+
+For example, with 4 servers:
+- hash("user_123") = 42 → 42 % 4 = 2 → Server 2
+- hash("user_456") = 17 → 17 % 4 = 1 → Server 1
+
+The problem arises when we add or remove a server. If we go from 4 to 5 servers:
+- hash("user_123") = 42 → 42 % 5 = 2 → Server 2 (same)
+- hash("user_456") = 17 → 17 % 5 = 2 → Server 2 (changed!)
+
+In fact, when the number of servers changes, approximately (n-1)/n of all keys need to be remapped, where n is the new number of servers. This causes massive cache invalidation and data migration.
+
+How Consistent Hashing Works
+============================
+
+Consistent hashing solves this problem by using a hash ring (also called a hash circle).
+
+Step 1: Create the Hash Ring
+----------------------------
+Imagine a circle (ring) that represents the entire hash space, typically from 0 to 2^32 - 1. Both servers and keys are mapped onto this ring using a hash function.
+
+Step 2: Place Servers on the Ring
+---------------------------------
+Each server is assigned a position on the ring by hashing its identifier (like IP address or server name):
+- Server A → hash("ServerA") = position on ring
+- Server B → hash("ServerB") = position on ring
+- Server C → hash("ServerC") = position on ring
+
+Step 3: Map Keys to Servers
+---------------------------
+When we need to find which server handles a particular key:
+1. Hash the key to get its position on the ring
+2. Walk clockwise from that position until you find a server
+3. That server is responsible for the key
+
+Benefits of Consistent Hashing
+==============================
+
+1. Minimal Key Remapping
+------------------------
+When a server is added or removed, only approximately K/N keys need to be remapped, where K is the total number of keys and N is the number of servers. This is a massive improvement over traditional hashing.
+
+2. Horizontal Scalability
+-------------------------
+Adding new servers is seamless. The new server only takes over a portion of keys from its neighbors on the ring.
+
+3. Load Distribution
+-------------------
+Keys are distributed across servers based on their hash values, providing relatively even distribution.
+
+Virtual Nodes (VNodes)
+======================
+
+One problem with basic consistent hashing is uneven load distribution. If servers are not evenly spaced on the ring, some servers may handle more keys than others.
+
+The solution is virtual nodes. Instead of mapping each physical server to one point on the ring, we map it to multiple points (virtual nodes).
+
+For example, with 3 virtual nodes per server:
+- Server A → hash("ServerA-1"), hash("ServerA-2"), hash("ServerA-3")
+- Server B → hash("ServerB-1"), hash("ServerB-2"), hash("ServerB-3")
+
+Benefits of virtual nodes:
+1. More even load distribution
+2. When a server is removed, its load is spread across many servers
+3. Heterogeneous servers can have different numbers of virtual nodes
+
+Implementation Considerations
+=============================
+
+Hash Function Selection
+-----------------------
+Choose a hash function that provides good distribution:
+- MD5 (128-bit, but not cryptographically secure)
+- SHA-1 or SHA-256 (slower but better distribution)
+- MurmurHash or xxHash (fast, good distribution)
+
+Data Structure for the Ring
+---------------------------
+Use a sorted data structure for efficient lookups:
+- Sorted array with binary search: O(log n) lookup
+- Skip list: O(log n) lookup with easier updates
+- Red-black tree: O(log n) for all operations
+
+Replication Strategy
+--------------------
+For fault tolerance, data is often replicated to multiple consecutive nodes on the ring. If a key maps to Server A, copies might also be stored on the next 2 servers clockwise (Server B and Server C).
+
+Real-World Applications
+=======================
+
+1. Amazon DynamoDB
+------------------
+DynamoDB uses consistent hashing to distribute data across storage nodes. Virtual nodes help balance load across heterogeneous hardware.
+
+2. Apache Cassandra
+-------------------
+Cassandra uses consistent hashing for data partitioning across nodes in a cluster. Each node is assigned multiple token ranges (virtual nodes).
+
+3. Discord
+----------
+Discord uses consistent hashing to route messages to the correct server handling a specific channel or guild.
+
+4. Memcached
+------------
+Many memcached client libraries use consistent hashing to distribute cache keys across multiple cache servers.
+
+5. Content Delivery Networks (CDNs)
+-----------------------------------
+CDNs use consistent hashing to determine which edge server should cache and serve specific content.
+
+6. Load Balancers
+-----------------
+Some load balancers use consistent hashing for session persistence, ensuring requests from the same client go to the same backend server.
+
+Example: Consistent Hashing in Python
+=====================================
+
+Here's a simple implementation concept:
+
+class ConsistentHash:
+    def __init__(self, nodes, virtual_nodes=100):
+        self.ring = {}
+        self.sorted_keys = []
+        self.virtual_nodes = virtual_nodes
+        
+        for node in nodes:
+            self.add_node(node)
+    
+    def add_node(self, node):
+        for i in range(self.virtual_nodes):
+            key = self.hash(f"{node}-{i}")
+            self.ring[key] = node
+            self.sorted_keys.append(key)
+        self.sorted_keys.sort()
+    
+    def remove_node(self, node):
+        for i in range(self.virtual_nodes):
+            key = self.hash(f"{node}-{i}")
+            del self.ring[key]
+            self.sorted_keys.remove(key)
+    
+    def get_node(self, data_key):
+        if not self.ring:
+            return None
+        
+        key = self.hash(data_key)
+        # Find the first node clockwise from this key
+        for ring_key in self.sorted_keys:
+            if ring_key >= key:
+                return self.ring[ring_key]
+        # Wrap around to the first node
+        return self.ring[self.sorted_keys[0]]
+    
+    def hash(self, key):
+        # Use a consistent hash function
+        return hashlib.md5(key.encode()).hexdigest()
+
+Comparison: Consistent Hashing vs Other Approaches
+===================================================
+
+| Approach              | Key Remapping on Change | Load Balance | Complexity |
+|-----------------------|-------------------------|--------------|------------|
+| Modulo Hashing        | ~100% (worst case)      | Good         | Simple     |
+| Consistent Hashing    | ~1/N keys               | Good         | Moderate   |
+| Rendezvous Hashing    | ~1/N keys               | Excellent    | Higher     |
+| Jump Consistent Hash  | ~1/N keys               | Excellent    | Simple     |
+
+Common Interview Questions
+==========================
+
+Q1: What happens when a node fails in consistent hashing?
+A: The keys that were on the failed node are automatically remapped to the next node clockwise on the ring. Only keys from the failed node need to be remapped.
+
+Q2: How do you handle hot spots (popular keys)?
+A: Solutions include:
+- Virtual nodes to spread load
+- Key replication to multiple nodes
+- Caching layer in front of the data store
+- Application-level load balancing for known hot keys
+
+Q3: What is the difference between consistent hashing and rendezvous hashing?
+A: In rendezvous hashing (also called HRW hashing), each key calculates a weight for every node using the hash of (key + node), and the node with the highest weight is selected. It has better load distribution but requires calculating weights for all nodes.
+
+Q4: How many virtual nodes should be used?
+A: Typically 100-200 virtual nodes per physical node provide good balance between distribution quality and memory overhead. More virtual nodes = better distribution but more memory.
+
+Summary
+=======
+
+Consistent hashing is a fundamental technique in distributed systems that:
+1. Minimizes data movement when nodes are added or removed
+2. Provides horizontal scalability
+3. Distributes load across nodes
+4. Is used by major systems like DynamoDB, Cassandra, and many caching solutions
+
+Key concepts to remember:
+- Hash ring representation
+- Clockwise lookup for key-to-server mapping
+- Virtual nodes for better distribution
+- O(log n) lookup complexity with proper data structures
+
