@@ -82,7 +82,7 @@ class RAGService:
         document_id: UUID,
         query: str,
         num_chunks: int = 5,
-        similarity_threshold: float = 0.7
+        similarity_threshold: float = 0.3
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         Retrieve the most relevant chunks using LangChain embeddings.
@@ -90,6 +90,9 @@ class RAGService:
         Uses GoogleGenerativeAIEmbeddings from LangChain to generate query embedding,
         then performs similarity search against stored chunk embeddings.
         Rate-limited to prevent quota exceeded errors.
+        
+        Note: similarity_threshold is lowered to 0.3 to capture more relevant context.
+        Even if chunks don't meet threshold, we return top chunks as fallback.
         """
         # Generate query embedding using LangChain (rate-limited)
         await self._rate_limiter.wait_async()
@@ -103,17 +106,26 @@ class RAGService:
         )
         chunks = result.scalars().all()
         
-        # Calculate similarity scores
-        scored_chunks = []
+        # Calculate similarity scores for ALL chunks
+        all_scored_chunks = []
         for chunk in chunks:
             if chunk.embedding:
                 score = self.cosine_similarity(query_embedding, chunk.embedding)
-                if score >= similarity_threshold:
-                    scored_chunks.append((chunk, score))
+                all_scored_chunks.append((chunk, score))
         
-        # Sort by similarity and return top chunks
-        scored_chunks.sort(key=lambda x: x[1], reverse=True)
-        return scored_chunks[:num_chunks]
+        # Sort by similarity (highest first)
+        all_scored_chunks.sort(key=lambda x: x[1], reverse=True)
+        
+        # Filter by threshold
+        filtered_chunks = [(chunk, score) for chunk, score in all_scored_chunks if score >= similarity_threshold]
+        
+        # If no chunks meet threshold, return top chunks anyway as fallback
+        # This ensures the LLM always has some context to work with
+        if not filtered_chunks and all_scored_chunks:
+            logger.warning(f"No chunks met similarity threshold {similarity_threshold}. Using top {num_chunks} chunks as fallback.")
+            return all_scored_chunks[:num_chunks]
+        
+        return filtered_chunks[:num_chunks]
     
     async def retrieve_from_multiple_documents(
         self,
@@ -121,7 +133,7 @@ class RAGService:
         document_ids: List[UUID],
         query: str,
         num_chunks_per_doc: int = 3,
-        similarity_threshold: float = 0.7
+        similarity_threshold: float = 0.3
     ) -> List[Tuple[DocumentChunk, float, UUID]]:
         """
         Retrieve relevant chunks from multiple documents.
@@ -265,7 +277,7 @@ Please provide a helpful and accurate answer based on the context provided."""
         session: ChatSession,
         question: str,
         num_context_chunks: int = 5,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.3,
         include_citations: bool = True,
         include_suggestions: bool = True,
         max_response_tokens: int = 1000
