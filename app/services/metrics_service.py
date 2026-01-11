@@ -50,7 +50,7 @@ class MetricsService:
             tokens_used=tokens_used,
             api_calls=api_calls,
             estimated_cost=estimated_cost,
-            metadata=metadata or {}
+            extra_data=metadata or {}
         )
         
         db.add(metric)
@@ -333,15 +333,26 @@ class MetricsService:
         return result.scalars().all()
     
     def _estimate_cost(self, tokens: int, metric_type: MetricType) -> float:
-        """Estimate cost based on token usage and operation type."""
-        # Pricing estimates (per 1K tokens)
+        """Estimate cost based on token usage and operation type.
+        
+        Uses Google Gemini pricing (as of Jan 2024):
+        - Gemini 2.0 Flash: $0.10 / 1M input tokens, $0.40 / 1M output tokens
+        - Text Embedding: $0.00 / 1K tokens (free tier) or ~$0.00004 / 1K tokens
+        
+        For simplicity, we use input token pricing for all operations.
+        """
+        # Pricing estimates (per 1M tokens) - Google Gemini
         pricing = {
-            MetricType.EMBEDDING: 0.0001,  # text-embedding-3-small
-            MetricType.AI_ANALYSIS: 0.01,  # GPT-4 Turbo input
-            MetricType.CHAT_QUERY: 0.01,  # GPT-4 Turbo input
+            MetricType.EMBEDDING: 0.000025,      # text-embedding-004 (~$0.025 per 1M)
+            MetricType.AI_ANALYSIS: 0.00010,     # Gemini 2.0 Flash ($0.10 per 1M input)
+            MetricType.CHAT_QUERY: 0.00010,      # Gemini 2.0 Flash ($0.10 per 1M input)
+            MetricType.DOCUMENT_PROCESSING: 0.00010,  # Combined embedding + analysis
+            MetricType.TEXT_EXTRACTION: 0.0,     # No API cost
+            MetricType.CHUNKING: 0.0,            # No API cost
+            MetricType.RETRIEVAL: 0.000025,      # Embedding for query
         }
         
-        rate = pricing.get(metric_type, 0.01)
+        rate = pricing.get(metric_type, 0.0001)  # Default rate
         return (tokens / 1000) * rate
 
 

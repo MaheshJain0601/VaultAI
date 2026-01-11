@@ -73,8 +73,10 @@ class Settings(BaseSettings):
     
     @property
     def is_using_supabase_db(self) -> bool:
-        """Check if using Supabase for database."""
-        return "supabase" in self.database_url.lower()
+        """Check if using Supabase for database (including pooler connections)."""
+        db_url_lower = self.database_url.lower()
+        # Check for direct Supabase URL or pooler URL
+        return any(x in db_url_lower for x in ["supabase", "pooler.supabase", "pooler"])
 
 
 @lru_cache

@@ -109,7 +109,7 @@ function formatNumber(num) {
 }
 
 function formatDate(dateStr) {
-    const date = new Date(dateStr);
+    const date = parseUTCDate(dateStr);
     const now = new Date();
     const diff = now - date;
     
@@ -119,6 +119,29 @@ function formatDate(dateStr) {
     if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
     
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function parseUTCDate(dateStr) {
+    // If the date string doesn't end with 'Z' or have timezone info, treat it as UTC
+    if (dateStr && !dateStr.endsWith('Z') && !dateStr.includes('+') && !dateStr.includes('-', 10)) {
+        dateStr = dateStr + 'Z';
+    }
+    return new Date(dateStr);
+}
+
+function formatDateTime(dateStr) {
+    // Format a UTC date string to local timezone with full date and time
+    const date = parseUTCDate(dateStr);
+    return date.toLocaleString('en-IN', {
+        day: '2-digit',
+        month: '2-digit', 
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZoneName: 'short'
+    });
 }
 
 function formatCurrency(amount) {
@@ -637,9 +660,9 @@ function renderDocumentDetail() {
                 </div>
                 <div class="card-body">
                     <div style="font-size: 0.875rem; color: var(--text-secondary);">
-                        <p><strong>Created:</strong> ${new Date(doc.created_at).toLocaleString()}</p>
-                        ${doc.processing_started_at ? `<p><strong>Processing Started:</strong> ${new Date(doc.processing_started_at).toLocaleString()}</p>` : ''}
-                        ${doc.processing_completed_at ? `<p><strong>Completed:</strong> ${new Date(doc.processing_completed_at).toLocaleString()}</p>` : ''}
+                        <p><strong>Created:</strong> ${formatDateTime(doc.created_at)}</p>
+                        ${doc.processing_started_at ? `<p><strong>Processing Started:</strong> ${formatDateTime(doc.processing_started_at)}</p>` : ''}
+                        ${doc.processing_completed_at ? `<p><strong>Completed:</strong> ${formatDateTime(doc.processing_completed_at)}</p>` : ''}
                         ${doc.processing_duration_ms ? `<p><strong>Duration:</strong> ${(doc.processing_duration_ms / 1000).toFixed(2)}s</p>` : ''}
                         ${doc.processing_error ? `<p style="color: var(--error);"><strong>Error:</strong> ${doc.processing_error}</p>` : ''}
                         ${doc.embedding_model ? `<p><strong>Embedding Model:</strong> ${doc.embedding_model}</p>` : ''}

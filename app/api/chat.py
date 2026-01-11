@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_session
 from app.models.document import Document, DocumentStatus
 from app.models.chat import ChatSession, ChatMessage, MessageRole
+from app.models.metrics import MetricType
 from app.schemas.chat import (
     ChatSessionCreate,
     ChatSessionResponse,
@@ -22,6 +23,7 @@ from app.schemas.chat import (
     MultiDocumentChatResponse
 )
 from app.services.rag_service import rag_service
+from app.services.metrics_service import metrics_service
 
 router = APIRouter()
 
@@ -217,6 +219,9 @@ async def ask_question(
     db.add(user_message)
     await db.flush()
     
+    # Track start time for metrics
+    query_start_time = datetime.utcnow()
+    
     # Generate answer using RAG
     answer_data = await rag_service.answer_question(
         db=db,
@@ -228,6 +233,8 @@ async def ask_question(
         include_suggestions=request.include_suggestions,
         max_response_tokens=request.max_response_tokens
     )
+    
+    query_end_time = datetime.utcnow()
     
     # Save assistant message
     assistant_message = ChatMessage(
@@ -252,6 +259,31 @@ async def ask_question(
     
     await db.commit()
     await db.refresh(assistant_message)
+    
+    # Record processing metric for this chat query
+    try:
+        await metrics_service.record_processing_metric(
+            db=db,
+            metric_type=MetricType.CHAT_QUERY,
+            operation_name="chat_question",
+            started_at=query_start_time,
+            completed_at=query_end_time,
+            document_id=session.document_id,
+            session_id=session_id,
+            success=True,
+            tokens_used=answer_data["total_tokens"],
+            api_calls=2,  # Embedding + LLM call
+            metadata={
+                "question_length": len(request.question),
+                "answer_length": len(answer_data["answer"]),
+                "context_chunks": answer_data["context_used"],
+                "model": answer_data["model_used"]
+            }
+        )
+    except Exception as e:
+        # Don't fail the request if metrics recording fails
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to record chat metric: {e}")
     
     # Build response
     citations = [

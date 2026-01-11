@@ -1,13 +1,15 @@
 """Database configuration and session management."""
+import asyncio
 import logging
 import socket
 import ssl
 from urllib.parse import urlparse, urlunparse
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
+import asyncpg
 
 from app.config import settings
 
@@ -45,41 +47,47 @@ if settings.is_using_supabase_db:
     database_url = _resolve_hostname_to_ipv4(settings.database_url)
     sync_database_url = _resolve_hostname_to_ipv4(settings.sync_database_url)
 
-# Async engine for FastAPI - create connect_args based on environment
-async_connect_args = {}
+# Parse database URL for asyncpg connection
+parsed_url = urlparse(database_url.replace("postgresql+asyncpg://", "postgresql://"))
+
+# Create SSL context for Supabase
+ssl_context = None
 if settings.is_using_supabase_db:
     ssl_context = ssl.create_default_context()
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl.CERT_NONE
-    # Key fix: set statement_cache_size=0 for pgbouncer compatibility
-    # This tells asyncpg not to use prepared statements
-    async_connect_args = {
-        "ssl": ssl_context,
-        "statement_cache_size": 0,  # Critical for pgbouncer
-        "server_settings": {
-            "application_name": "vault-ai",
-        },
-    }
+    logger.info("Using Supabase database configuration with SSL")
+
+
+async def _create_asyncpg_connection():
+    """Custom connection creator with statement_cache_size=0 for pgbouncer compatibility."""
+    return await asyncpg.connect(
+        host=parsed_url.hostname,
+        port=parsed_url.port or 5432,
+        user=parsed_url.username,
+        password=parsed_url.password,
+        database=parsed_url.path.lstrip('/'),
+        ssl=ssl_context if settings.is_using_supabase_db else None,
+        statement_cache_size=0,  # Critical for pgbouncer/Supabase pooler
+        server_settings={"application_name": "vault-ai"},
+    )
+
 
 # Create async engine with appropriate pool configuration
-if settings.is_using_supabase_db:
-    # For Supabase with pgbouncer, use NullPool
-    async_engine = create_async_engine(
-        database_url,
-        echo=settings.debug,
-        poolclass=NullPool,
-        connect_args=async_connect_args,
-    )
-else:
-    async_engine = create_async_engine(
-        database_url,
-        echo=settings.debug,
-        pool_size=POOL_SIZE,
-        max_overflow=MAX_OVERFLOW,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        connect_args=async_connect_args,
-    )
+# IMPORTANT: Disable asyncpg's prepared statement cache for pgbouncer compatibility
+async_engine = create_async_engine(
+    database_url,
+    echo=settings.debug,
+    poolclass=NullPool,  # Always use NullPool for pgbouncer compatibility
+    connect_args={
+        # Disable asyncpg's native prepared statement cache (critical for pgbouncer/Supabase)
+        "statement_cache_size": 0,
+        # Disable asyncpg's prepared statement name generation
+        "prepared_statement_name_func": lambda: "",
+        "server_settings": {"application_name": "vault-ai"},
+        **({"ssl": ssl_context} if ssl_context else {}),
+    },
+)
 
 # Sync engine for Celery workers
 sync_engine = create_engine(
